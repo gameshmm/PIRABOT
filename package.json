@@ -13,7 +13,7 @@
     "dotenv": "^8.2.0",
     "duck-duck-scrape": "^1.0.3",
     "enmap": "^5.2.4",
-    "moment": "^2.24.0"
+    "moment": "^2.29.2"
   },
   "devDependencies": {}
 }
