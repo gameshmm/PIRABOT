@@ -2,12 +2,19 @@ if (process.version.slice(1).split('.')[0] < 8) throw new Error('Node 8.0.0 or h
 
 require('dotenv').config()
 
-const Discord = require('discord.js')
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { readdirSync } = require('fs')
-const Enmap = require('enmap')
-const client = new Discord.Client()
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions
+  ]
+});
 
-client.commands = new Enmap()
+client.commands = new Collection()
 client.startTime = Date.now()
 
 const cmdFiles = readdirSync('./commands/')

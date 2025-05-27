@@ -1,28 +1,82 @@
-/**
- * O evento raw é emitido pelo discord.js para todo pacote recebido.
- * Neste caso, estamos utilizando ele para registrar reações em uma mensagem mesmo que ela não esteja armazenada no cache.
- */
-
+// events/raw.js
 module.exports = async (client, event) => {
-  // Verificamos se o tipo do evento é de adicionar ou remover uma reação
-  if (event.t === 'MESSAGE_REACTION_ADD' || event.t === 'MESSAGE_REACTION_REMOVE') {
-    // Importamos o arquivo de configuração de "EmojiRole"
-    const emojiToRole = require('../emojiRole.json')
-    // Se o id da mensagem cadastrada na configuração não for o mesmo da mensagem que recebeu a reação, cancelamos a execução dessa função
-    if (emojiToRole.id !== event.d.message_id) return
-    // Se o emoji da reação não estiver registrado na lista, cancelamos também
-    if (!emojiToRole.emojis[event.d.emoji.id]) return
-    // Pegamos o canal onde a mensagem foi enviada para poder ter acesso ao objeto do membro
-    const channel = client.channels.get(event.d.channel_id)
-    // Pegamos o membro a partir da guild
-    const member = channel.guild.members.get(event.d.user_id)
-    // Pegamos a role a partir do id
-    const role = channel.guild.roles.get(emojiToRole.emojis[event.d.emoji.id])
-    // Para evitar um possivel erro, verificamos se as duas variaveis existem (caso a role tenha sido deletada ou o usuario tenha saido do servidor)
-    if (!member || !role) return
-    // Se a reação foi ADICIONADA, terminamos a execução adicionando o cargo para o membro
-    if (event.t === 'MESSAGE_REACTION_ADD') return member.addRole(role)
-    // Caso a função não deixe de ser executada (se o tipo do evento for de remoção de reaction), removemos o cargo
-    member.removeRole(role)
+  // Only process specific reaction events
+  if (event.t !== 'MESSAGE_REACTION_ADD' && event.t !== 'MESSAGE_REACTION_REMOVE') {
+    return;
   }
-}
+
+  // Destructure data from the event payload
+  const { user_id, message_id, guild_id, emoji } = event.d;
+
+  // Ignore reactions from the bot itself or other bots
+  // Note: user_id is the ID of the user who reacted. client.user.id is the bot's ID.
+  if (!user_id || user_id === client.user.id) {
+    // Also check if the user who reacted is a bot, if guild and member data were fetched:
+    // const guildForBotCheck = client.guilds.cache.get(guild_id);
+    // if (guildForBotCheck) {
+    //   const memberForBotCheck = guildForBotCheck.members.cache.get(user_id);
+    //   if (memberForBotCheck && memberForBotCheck.user.bot) return;
+    // }
+    // For simplicity in raw event, just checking against client.user.id is a common first step.
+    return;
+  }
+
+  let emojiRoleConfig;
+  try {
+    // Clear cache for fresh read - consider a more robust config management strategy long-term
+    const configPath = require.resolve('../emojiRole.json');
+    delete require.cache[configPath];
+    emojiRoleConfig = require(configPath);
+  } catch (error) {
+    console.error('[Raw Event] Falha ao carregar emojiRole.json:', error);
+    return;
+  }
+
+  // Check if the reaction is on the configured message
+  if (emojiRoleConfig.id !== message_id) {
+    return;
+  }
+
+  // Determine the emoji key (ID for custom emojis, name for Unicode emojis)
+  const emojiKey = emoji.id ? emoji.id : emoji.name;
+
+  const roleId = emojiRoleConfig.emojis[emojiKey];
+  if (!roleId) {
+    // This emoji is not configured for a role on this message
+    return;
+  }
+
+  try {
+    const guild = await client.guilds.fetch(guild_id).catch(err => {
+      // console.error(`[Raw Event] Falha ao buscar guild ${guild_id}: ${err.message}`);
+      return null;
+    });
+
+    if (!guild) return; // Guild not found or bot is not in it
+
+    const member = await guild.members.fetch(user_id).catch(err => {
+      // console.error(`[Raw Event] Falha ao buscar membro ${user_id} na guild ${guild.name}: ${err.message}`);
+      return null;
+    });
+    
+    if (!member) return; // Member not found (e.g., left the server)
+    if (member.user.bot) return; // Double check if the fetched member is a bot
+
+    const role = guild.roles.cache.get(roleId);
+    if (!role) {
+      console.error(`[Raw Event] Role com ID ${roleId} (associada ao emoji ${emojiKey}) não encontrada no servidor ${guild.name}.`);
+      // Future enhancement: consider notifying an admin or auto-removing this broken mapping
+      return;
+    }
+
+    if (event.t === 'MESSAGE_REACTION_ADD') {
+      await member.roles.add(role);
+      // console.log(`[Raw Event] Cargo ${role.name} adicionado para ${member.user.tag} via reaction (Emoji: ${emojiKey}).`);
+    } else if (event.t === 'MESSAGE_REACTION_REMOVE') {
+      await member.roles.remove(role);
+      // console.log(`[Raw Event] Cargo ${role.name} removido de ${member.user.tag} via reaction (Emoji: ${emojiKey}).`);
+    }
+  } catch (error) {
+    console.error(`[Raw Event] Erro ao processar reaction role (Evento: ${event.t}, Emoji: ${emojiKey}, User: ${user_id}):`, error);
+  }
+};
